@@ -1,76 +1,89 @@
 "use strict";
 
-const wa = require("./server/whatsapp");
-const fs = require("fs");
-const dbs = require('./server/database/index');
-const specs = require('./server/lib/specs');
 require("dotenv").config();
+
+const fs = require("fs");
+const express = require("express");
+const http = require("http");
+const bodyParser = require("body-parser");
+const { Server } = require("socket.io");
+
+const wa = require("./server/whatsapp");
+const dbs = require("./server/database/index");
+const specs = require("./server/lib/specs");
 const lib = require("./server/lib");
+
 global.log = lib.log;
 
 /**
- * EXPRESS FOR ROUTING
+ * EXPRESS SETUP
  */
-const express = require("express");
 const app = express();
-const https = require("https");
-const server = https.createServer({
-  key: fs.readFileSync("ssl/privkey.pem"),
-  cert: fs.readFileSync("ssl/fullchain.pem")
-}, app);
-
-
-/**
- * SOCKET.IO
- */
-const { Server } = require("socket.io");
+const server = http.createServer(app);
 const io = new Server(server, {
+  cors: {
+    origin: "*",
+  },
   pingInterval: 25000,
   pingTimeout: 10000,
 });
-const port = process.env.PORT_NODE;
 
+const port = process.env.PORT_NODE || 3000;
+
+/**
+ * MIDDLEWARES
+ */
 app.use((req, res, next) => {
   res.set("Cache-Control", "no-store");
   req.io = io;
   next();
 });
 
-const bodyParser = require("body-parser");
-
 app.use(
   bodyParser.urlencoded({
-    extended: false,
+    extended: true,
     limit: "50mb",
     parameterLimit: 100000,
   })
 );
-
 app.use(bodyParser.json());
+
 app.use(express.static("src/public"));
 app.use(require("./server/router"));
 
-io.on('connection', socket => {
-	console.log("A user connected");
-	specs.init(socket);
-	socket.on('StartConnection', data => wa.connectToWhatsApp(data, io));
-	socket.on('ConnectViaCode', data => wa.connectToWhatsApp(data, io, true));
-	socket.on('LogoutDevice', device => wa.deleteCredentials(device, io));
-	socket.on('disconnect', () => console.log('A user disconnected:', socket.id));
+/**
+ * SOCKET.IO HANDLERS
+ */
+io.on("connection", (socket) => {
+  console.log("🔌 Novo cliente conectado:", socket.id);
+
+  specs.init(socket);
+
+  socket.on("StartConnection", (data) => wa.connectToWhatsApp(data, io));
+  socket.on("ConnectViaCode", (data) => wa.connectToWhatsApp(data, io, true));
+  socket.on("LogoutDevice", (device) => wa.deleteCredentials(device, io));
+
+  socket.on("disconnect", () => console.log("❌ Cliente desconectado:", socket.id));
 });
 
-
-server.listen(port, () => {
-    console.log(`Server running and listening on port: ${port}`);
+/**
+ * START SERVER
+ */
+server.listen(port, "0.0.0.0", () => {
+  console.log(`🚀 Servidor rodando e ouvindo na porta ${port}`);
 });
 
+/**
+ * RECONNECT DEVICES ON START
+ */
 dbs.db.query("SELECT * FROM devices WHERE status = 'Connected'", (err, results) => {
   if (err) {
-    console.error('Error executing query:', err);
+    return console.error("Erro ao executar query:", err);
   }
-  results.forEach(row => {
+  results.forEach((row) => {
     const number = row.body;
     if (/^\d+$/.test(number)) {
+      console.log(`🔁 Reconectando dispositivo ${number}...`);
       wa.connectToWhatsApp(number);
     }
   });
