@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: /var/www/mpwa
+      dockerfile: Dockerfile
+      args:
+        APP_ENV: local
+    container_name: mpwa-laravel
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/www/mpwa:/var/www/mpwa
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      # Variáveis extras do Coolify ou Nixpacks
+      COOLIFY_URL: "http://h8440okskkkgsockgk488s0c.72.61.217.128.sslip.io:3000"
+      NIXPACKS_PHP_FALLBACK_PATH: "/index.php"
+      NIXPACKS_PHP_ROOT_DIR: "/app/public"
+      NIXPACKS_NODE_VERSION: "20"
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 1024
+    tmpfs:
+      - /run:rw,noexec,nosuid,size=65536k
+    hostname: myapp
+    command: ["php-fpm"]
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: mpwa-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/www/mpwa:/var/www/mpwa
+      - ./nginx/conf.d:/etc/nginx/conf.d
+    depends_on:
+      - app
