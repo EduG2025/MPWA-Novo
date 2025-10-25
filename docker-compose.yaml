@@ -5,8 +5,6 @@ services:
     build:
       context: /var/www/mpwa
       dockerfile: Dockerfile
-      args:
-        APP_ENV: local
     container_name: mpwa-laravel
     restart: unless-stopped
     ports:
@@ -16,7 +14,6 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
-      # Variáveis extras do Coolify ou Nixpacks
       COOLIFY_URL: "http://h8440okskkkgsockgk488s0c.72.61.217.128.sslip.io:3000"
       NIXPACKS_PHP_FALLBACK_PATH: "/index.php"
       NIXPACKS_PHP_ROOT_DIR: "/app/public"
