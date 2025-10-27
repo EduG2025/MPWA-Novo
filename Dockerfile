@@ -1,53 +1,81 @@
-# -------------------------------
-# Stage 1: Build
-# -------------------------------
-FROM php:8.2-cli AS build
+# ----------------------------------------------------------------------
+# STAGE 1: BUILD - Compilação de Assets e Instalação de Dependências
+# ----------------------------------------------------------------------
+FROM composer:2.7 as composer_stage
 
-# Diretório de trabalho
-WORKDIR /var/www/mpwa
+# Define o diretório de trabalho
+WORKDIR /app
 
-# Instala dependências do sistema
-RUN apt-get update && apt-get install -y \
-    git unzip curl libpng-dev libonig-dev libxml2-dev libzip-dev zip npm \
-    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Ambiente de build
-ENV APP_ENV=local
-
-# Copia arquivos do Composer e instala dependências
+# Copia os arquivos de configuração do Composer
 COPY composer.json composer.lock ./
-RUN composer install --no-interaction --optimize-autoloader
 
-# Instala dependências Node.js
+# Instala as dependências do PHP (sem dependências de desenvolvimento)
+RUN composer install --no-dev --optimize-autoloader --no-interaction
+
+# ----------------------------------------------------------------------
+# STAGE 2: NODE BUILD - Compilação de Assets Front-end
+# ----------------------------------------------------------------------
+FROM node:20-alpine as node_stage
+
+# Define o diretório de trabalho
+WORKDIR /app
+
+# Copia os arquivos de configuração do Node
 COPY package.json package-lock.json ./
+
+# Instala as dependências do Node
 RUN npm install
 
-# -------------------------------
-# Stage 2: Runtime
-# -------------------------------
-FROM php:8.2-fpm
-
-# Diretório de trabalho
-WORKDIR /var/www/mpwa
-
-# Copia vendor e node_modules do build
-COPY --from=build /var/www/mpwa/vendor ./vendor
-COPY --from=build /var/www/mpwa/node_modules ./node_modules
-
-# Copia restante do projeto
+# Copia o código-fonte do projeto
 COPY . .
 
-# Permissões Laravel
-RUN chown -R www-data:www-data storage bootstrap/cache \
-    && chmod -R 775 storage bootstrap/cache
+# Compila os assets (CSS/JS) para produção
+# Se o seu projeto usa 'npm run dev' ou outro comando, ajuste aqui.
+RUN npm run build
 
-# Ambiente de produção
-ENV APP_ENV=production
-ENV APP_DEBUG=false
+# ----------------------------------------------------------------------
+# STAGE 3: PRODUCTION - Imagem Final de Execução (PHP-FPM)
+# ----------------------------------------------------------------------
+# Usamos uma imagem PHP-FPM (FastCGI Process Manager) para rodar o Laravel
+FROM php:8.2-fpm-alpine
 
-# Expondo porta PHP-FPM
+# Instala as extensões PHP necessárias para o Laravel e utilitários
+RUN apk add --no-cache \
+    nginx \
+    supervisor \
+    git \
+    libzip-dev \
+    && docker-php-ext-install pdo_mysql zip
+
+# Define o diretório de trabalho
+WORKDIR /var/www/html
+
+# Remove o código-fonte padrão da imagem
+RUN rm -rf ./*
+
+# Copia as dependências do Composer (Stage 1)
+COPY --from=composer_stage /app/vendor /var/www/html/vendor
+
+# Copia os assets compilados e o código-fonte (Stage 2)
+COPY --from=node_stage /app /var/www/html
+
+# Configura permissões para o Laravel
+# O usuário 'www-data' é o padrão do PHP-FPM
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 775 /var/www/html/storage \
+    && chmod -R 775 /var/www/html/bootstrap/cache
+
+# Expõe a porta padrão do PHP-FPM
 EXPOSE 9000
 
-# Comando padrão
+# Comando de inicialização (pode ser ajustado dependendo de como você usa o supervisor ou o Coolify)
+# Este comando garante que o PHP-FPM esteja rodando.
 CMD ["php-fpm"]
+
+# ----------------------------------------------------------------------
+# Configuração Adicional (Opcional, mas Recomendada)
+# ----------------------------------------------------------------------
+# Para rodar o Nginx junto com o PHP-FPM, você precisaria de um arquivo
+# de configuração do Nginx e um sistema de inicialização como o Supervisor.
+# Se você estiver usando o Coolify, ele geralmente gerencia o Nginx/Proxy
+# separadamente, apontando para a porta 9000 do seu container PHP-FPM.
